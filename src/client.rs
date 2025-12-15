@@ -35,6 +35,7 @@ use crate::{
     uuid,
     wrap::{self, commands::*},
 };
+use digest::Output;
 use sha2::Sha256;
 use std::{
     sync::{Arc, Mutex},
@@ -1036,6 +1037,22 @@ impl Client {
             .into())
     }
 
+    /// Compute an RSASSA-PKCS#1v1.5 signature of the SHA-256 hash of the given prehash.
+    ///
+    /// <https://developers.yubico.com/YubiHSM2/Commands/Sign_Pkcs1.html>
+    pub(crate) fn sign_rsa_pkcs1v15_prehash<S: SignatureAlgorithm>(
+        &self,
+        key_id: object::Id,
+        prehash: Output<S>,
+    ) -> Result<rsa::pkcs1::Signature, Error> {
+        Ok(self
+            .send_command(SignPkcs1Command {
+                key_id,
+                digest: prehash.to_vec(),
+            })?
+            .into())
+    }
+
     /// Compute an RSASSA-PKCS#1v1.5 signature of the SHA-256 hash of the given data.
     ///
     /// <https://developers.yubico.com/YubiHSM2/Commands/Sign_Pkcs1.html>
@@ -1055,16 +1072,16 @@ impl Client {
         key_id: object::Id,
         data: &[u8],
     ) -> Result<rsa::pss::Signature, Error> {
-        ensure!(
-            data.len() < rsa::pss::MAX_MESSAGE_SIZE,
-            ErrorKind::ProtocolError,
-            "message too large to be signed (max: {})",
-            rsa::pss::MAX_MESSAGE_SIZE
-        );
-
         let mut hasher = S::new();
         hasher.update(data);
         let digest = hasher.finalize();
+
+        ensure!(
+            digest.len() < rsa::pss::MAX_MESSAGE_SIZE,
+            ErrorKind::ProtocolError,
+            "digest too large to be signed (max: {})",
+            rsa::pss::MAX_MESSAGE_SIZE
+        );
 
         Ok(self
             .send_command(SignPssCommand {
